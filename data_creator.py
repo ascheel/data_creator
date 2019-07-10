@@ -9,7 +9,7 @@ import re
 import calendar
 import string
 
-class Faker:
+class DataCreator:
     calculated_types = (
         "age",
         "money",
@@ -50,7 +50,8 @@ class Faker:
             "country": self.country,
             "company_noun": self.company_noun,
             "optional_comma": self.optional_comma,
-            "random_letters": self.random_letters
+            "random_letters": self.random_letters,
+            "adjective": self.adjective
         }
 
         # if os.path.exists(self.db_filename):
@@ -64,14 +65,15 @@ class Faker:
         if not have_db:
             self._initialize()
 
-    def adjective(self):
+    def adjective(self, optional=False, space=False):
+        if optional:
+            if not random.randint(0,1):
+                return ""
         rowid = self.random_row("adjective")
-        return self.correct_case(self.get_scalar("SELECT adjective FROM adjective WHERE rowid = ?", (rowid,)))
-
-    def optional_adjective(self):
-        if random.randint(0, 1):
-            return "{} ".format(self.adjective())
-        return ""
+        output = self.correct_case(self.get_scalar("SELECT adjective FROM adjective WHERE rowid = ?", (rowid,)))
+        if space:
+            output += " "
+        return output
 
     def optional_comma(self):
         if random.randint(0, 1):
@@ -91,8 +93,34 @@ class Faker:
         self._init_company_suffix()
         self._init_company_noun()
         self._init_adjective()
+        self._init_credit_card()
         # self._init_company_word()
     
+    def _init_credit_card(self):
+        print("Initializing credit cards...")
+        sql = """
+        CREATE TABLE credit_card (
+            name text NOT NULL,
+            longname text,
+            number text NOT NULL PRIMARY KEY
+        )
+        """
+        self.exec_statement(sql)
+        self.exec_statement("CREATE INDEX idx_creditcard_name ON credit_card(name)")
+        self.db.commit()
+
+        input_file_name = os.path.join(self.lists, "credit_card.csv")
+        with open(input_file_name, "r") as f_in:
+            reader = csv.reader(f_in)
+            for row in reader:
+                name = row[0]
+                longname = row[1]
+                number = row[2]
+                sql = "INSERT INTO credit_card (name, longname, number) VALUES (?, ?, ?)"
+                values = (name, longname, number)
+                self.exec_statement(sql, values)
+            self.db.commit()
+
     def _init_city(self):
         print("Initializing cities...")
         sql = """
@@ -594,6 +622,9 @@ class Faker:
             self.get_rows(sql)
         return
 
+    #def credit_card(self,name=None):
+        
+
     def firstname(self, sex=None, boy=False, girl=False):
         if isinstance(sex, str):
             if sex.lower() in ("boy", "man", "male"):
@@ -672,11 +703,6 @@ class Faker:
         if space:
             suffix += " "
         return suffix
-
-    def optional_company_suffix(self):
-        if random.randint(0, 1):
-            return "{} ".format(self.company_suffix())
-        return ""
 
     def lastname(self):
         rowid = self.random_row("last_name")
@@ -819,7 +845,7 @@ class Faker:
         number = random.randint(start, end)
         return number / 100
     
-    def random_letters(self, count=1, period=False, space=False):
+    def letters(self, count=1, period=False, space=False):
         output = ""
         if count:
             count = int(count)
@@ -848,33 +874,42 @@ class Faker:
         return False
 
     def _handle_variables(self, statement):
-        if not self.has_variable(statement):
-            return statement
-        for key, value in self.variable_substitutions.items():
-            pattern_string = "%{}(,[a-zA-Z1-9=_]+)*%".format(key)
-            pattern = re.compile(pattern_string)
-            _data = pattern.search(statement)
-            while _data:
-                _input = _data.group(0)[1:-1]
-                kw = {}
-                if "," in _input:
-                    _variables = _input.split(",")[1:]
-                    for _var in _variables:
-                        if "=" in _var:
-                            key2, value2 = _var.split("=")
-                        else:
-                            key2 = _var
-                            value2 = True
-                        kw[key2] = value2
-                
-                statement = re.sub(pattern_string, value(**kw), statement)
+        while self.has_variable(statement):
+            for key, value in self.variable_substitutions.items():
+                pattern_string = "%{}(,[a-zA-Z1-9=_]+)*%".format(key)
+                pattern = re.compile(pattern_string)
                 _data = pattern.search(statement)
+                while _data:
+                    _input = _data.group(0)[1:-1]
+                    kw = {}
+                    if "," in _input:
+                        _variables = _input.split(",")[1:]
+                        for _var in _variables:
+                            if "=" in _var:
+                                key2, value2 = _var.split("=")
+                            else:
+                                key2 = _var
+                                value2 = True
+                            kw[key2] = value2
+                    
+                    statement = re.sub(pattern_string, value(**kw), statement)
+                    _data = pattern.search(statement)
         return statement
 
     def random_amp(self):
         _possibles = ("&", "and", "And")
         return random.choice(_possibles)
 
+    def random_letters(self, count=1, period=False, space=False):
+        output = ""
+        count = int(count)
+        for _ in range(count):
+            output += random.choice(string.ascii_uppercase)
+            if period:
+                output += "."
+            if space:
+                output += " "
+        return output
     #def generate_rows(self, pattern):
 
 
@@ -887,11 +922,13 @@ class Faker:
         )
         rowid = random.randint(0, len(formats) - 1)
         return self._handle_variables(formats[rowid])
-
+    
 
 def main():
-    f = Faker()
-    print(f.company_name())
+    d = DataCreator()
+    print(d.company_name())
+    statement = "%lastname%, %lastname%, %and% %lastname% %company_suffix,optional%"
+    print(d._handle_variables(statement))
 
 if __name__ == "__main__":
     main()
